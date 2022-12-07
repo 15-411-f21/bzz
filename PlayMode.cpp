@@ -17,9 +17,14 @@
 #include <iostream>
 #include <errno.h>
 #include <stdio.h>
+#include <mutex>
 
 int PlayMode::Cricket::seq = 0;
 static GLuint shadow_tex = 0;
+std::mutex cricket_mutex;
+std::mutex drawables_mutex;
+
+
 
 GLuint bzz_meshes_for_lit_color_texture_program = 0;
 Load< MeshBuffer > bzz_meshes(LoadTagDefault, []() -> MeshBuffer const * {
@@ -168,6 +173,7 @@ Load< Scene > bzz_scene(LoadTagDefault, []() -> Scene const * {
 			drawable.pipeline.textures[0].texture = tex.id;
 		}
 		if (mesh_name == "shadow") {
+			printf("\nLOADED SHDOW\n");
 			drawable.pipeline.blend = true;
 			drawable.transform->name = mesh_name;
 			struct PlayMode::texture tex;
@@ -249,10 +255,12 @@ void PlayMode::spawn_cricket() {
 	Cricket cricket = Cricket(Cricket::seq++, transform);
 
 	cricket.hatchAge = get_rng_range(6.f, 9.f);
-	cricket.matureAge = get_rng_range(20.f, 30.f);
+	cricket.matureAge = get_rng_range(10.f, 12.f);
 	cricket.lifeSpan = get_rng_range(80.f, 110.f);
 	
+	cricket_mutex.lock();
 	Crickets.push_back(cricket);
+	cricket_mutex.unlock();
 
 	transform->position = glm::vec3(get_rng_range(bedding_min.x,bedding_max.x), get_rng_range(bedding_min.y,bedding_max.y), baby_cricket_transform->position.z);
 	transform->rotation = glm::angleAxis(glm::radians(get_rng_range(0.f,360.f)), glm::vec3(0.0,0.0,1.0));
@@ -297,6 +305,7 @@ void PlayMode::kill_cricket(Cricket &cricket) {
 	// but the shadow should stay at the same place
 	std::string shadow_name = "shadow_" + std::to_string(cricket.cricketID);
 	
+	std::lock_guard<std::mutex> guard(drawables_mutex);
 	auto it = scene.drawables.begin();
 	while(it != scene.drawables.end()) {
 		Scene::Drawable dr = *it;
@@ -724,6 +733,7 @@ void PlayMode::update(float elapsed) {
 
 	// update crickets age and state
 	{
+		cricket_mutex.lock();	
 		for(Cricket &cricket: Crickets) {
 			if (cricket.is_dead()) {
 				continue;
@@ -773,11 +783,12 @@ void PlayMode::update(float elapsed) {
 				}
 			}
 		}
+		cricket_mutex.unlock();
 	}
 
 	// Move some crickets randomly
 	{
-		
+		cricket_mutex.lock();	
 		for(Cricket &cricket: Crickets) {
 			if(cricket.is_dead() || cricket.is_egg()) {
 				continue;
@@ -837,6 +848,7 @@ void PlayMode::update(float elapsed) {
 				cricket.transform->position += dir;
 			}
 		}
+		cricket_mutex.unlock();	
 	}
 
 	//update counts
@@ -845,6 +857,7 @@ void PlayMode::update(float elapsed) {
 		numMatureCrickets = 0;
 		numDeadCrickets = 0;
 		numEggs = 0;
+		cricket_mutex.lock();		
 		for(Cricket &cricket: Crickets) {
 			if (cricket.is_mature()){
 				numMatureCrickets ++;
@@ -860,15 +873,16 @@ void PlayMode::update(float elapsed) {
 			}
 		}
 		assert(numBabyCrickets + numMatureCrickets + numDeadCrickets + numEggs == Crickets.size());
+		cricket_mutex.unlock();	
 	}
 
 	//update disease rate if we have too many dead crickets in the environment
 	if ((uint64_t)(total_elapsed)%2 == 0)
 	{
 		auto is_sick = [=, *this](){
-			return size_t(rand() % 2000 + 1) < 8*numDeadCrickets/Crickets.size();
+			return size_t(rand() % 1000 + 1) < 8*numDeadCrickets/Crickets.size();
 		};
-
+		cricket_mutex.lock();	;	
 		for( Cricket &cricket: Crickets) {
 			if(cricket.is_dead() || cricket.is_egg()) {
 				continue;
@@ -878,7 +892,9 @@ void PlayMode::update(float elapsed) {
 				if(!first_time_sick) {
 					
 					first_time_sick = true;
+					printf("adding deadc cricket\n");
 					schedule_lambda([this](){
+						
 						buttons.emplace_back(this, "../scenes/skull.png", Button_UI::REMOVE_DEAD);
 						display_notification(data_path("../text/first_time_sick.txt"));
 					}, 1.5f);
@@ -889,6 +905,7 @@ void PlayMode::update(float elapsed) {
 				kill_cricket(cricket);
 			}
 		}
+		cricket_mutex.unlock();	
 	}
 	// Set sounds
 	{
@@ -918,6 +935,7 @@ void PlayMode::update(float elapsed) {
 				auto is_starving = [](){
 					return rand() % 1000 + 1 < 6;
 				};
+				cricket_mutex.lock();		
 				for( Cricket &cricket: Crickets) {
 					if(cricket.is_dead() || cricket.is_egg()) {
 						continue;
@@ -933,6 +951,7 @@ void PlayMode::update(float elapsed) {
 						kill_cricket(cricket);
 					}
 				}
+				cricket_mutex.unlock();	
 			}
 			totalFood = std::max(0.f, totalFood - (numBabyCrickets + numMatureCrickets) * cricketEatingRate * cur_elpased);
 			cur_elpased = 0.f;
@@ -1043,6 +1062,7 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 	alt_camera->aspect = float(drawable_size.x) / float(drawable_size.y);
 
 	// move glass to the back
+	drawables_mutex.lock();
 	std::list<Scene::Drawable> glass_drawables;
 	auto it = scene.drawables.begin();
 	while(it != scene.drawables.end()) {
@@ -1057,6 +1077,7 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 	for(Scene::Drawable &d: glass_drawables) {
 		scene.drawables.push_back(d);
 	}
+	drawables_mutex.unlock();
 
 	//set up light type and position for lit_color_texture_program:
 	// TODO: consider using the Light(s) in the scene to do this
@@ -1271,6 +1292,7 @@ void PlayMode::invoke_callback(Button_UI::call_back callback) {
 			if(clickSuccess) {
 				Sound::play(*cash_sample, 1.0f, 0.0f);
 				totalMoney -= 400;
+				cricket_mutex.lock();	
 				for(Cricket &cricket: Crickets) {
 					cricket.is_juicy = true;
 					cricket.juicyAge = cricket.age;
@@ -1278,6 +1300,7 @@ void PlayMode::invoke_callback(Button_UI::call_back callback) {
 					cricket.matureAge /= 2.f;
 					cricket.lifeSpan = 10000.f;
 				}
+				cricket_mutex.unlock();	
 				if(!first_time_steroids) {
 					schedule_lambda([this](){
 						display_notification(data_path("../text/first_time_steroids.txt"));
@@ -1399,7 +1422,7 @@ bool PlayMode::sell_mature() {
 	std::vector<Cricket> mature_crickets;
 	std::vector<Cricket> non_mature_crickets;
 	bool success = false;
-
+	cricket_mutex.lock();
 	for(Cricket &cricket: Crickets) {
 		if(cricket.is_mature() && !cricket.is_attacking) {
 			mature_crickets.push_back(cricket);
@@ -1428,8 +1451,9 @@ bool PlayMode::sell_mature() {
 
 	numMatureCrickets -= mature_crickets.size();
 	Crickets = std::move(non_mature_crickets);
-
+	cricket_mutex.unlock();
 	auto it = scene.drawables.begin();
+	std::lock_guard<std::mutex> guard(drawables_mutex);
 	while(it != scene.drawables.end()) {
 		Scene::Drawable dr = *it;
 
@@ -1439,7 +1463,6 @@ bool PlayMode::sell_mature() {
 		} else if (dr.transform->name.find("shadow_") != std::string::npos) {
 			size_t IDpos = dr.transform->name.find("shadow_") + std::strlen("shadow_");
 			std::string cricketID = dr.transform->name.substr(IDpos);
-
 			if (mature_cricket_names.count("Cricket_" + cricketID)) {
 				it = scene.drawables.erase(it);
 				continue;
@@ -1475,7 +1498,7 @@ bool PlayMode::remove_dead_crickets() {
 	std::vector<Cricket> dead_crickets;
 	std::vector<Cricket> live_crickets;
 	bool success = false;
-
+	cricket_mutex.lock();	
 	for(Cricket &cricket: Crickets) {
 		if(cricket.is_dead()) {
 			dead_crickets.push_back(cricket);
@@ -1484,6 +1507,7 @@ bool PlayMode::remove_dead_crickets() {
 			live_crickets.push_back(cricket);
 		}
 	}
+	
 
 	assert(dead_crickets.size() == numDeadCrickets);
 
@@ -1494,8 +1518,9 @@ bool PlayMode::remove_dead_crickets() {
 
 	numDeadCrickets = 0;
 	Crickets = std::move(live_crickets);
-
+	cricket_mutex.unlock();	
 	auto it = scene.drawables.begin();
+	std::lock_guard<std::mutex> guard(drawables_mutex);
 	while(it != scene.drawables.end()) {
 		Scene::Drawable dr = *it;
 
@@ -1650,10 +1675,10 @@ void PlayMode::draw_stats(glm::uvec2 const &drawable_size, float x, float y) {
 
 	std:: string sep = "      ";
 	
-	std::string s = "Food: " + std::to_string((int)totalFood) + sep + "Money: " + std::to_string((int)totalMoney) + sep + "Eggs:" + std::to_string(numEggs) + sep + "Nymphs: " + std::to_string(numBabyCrickets) + sep + "Adults: " + std::to_string(numMatureCrickets);
+	std::string s = "Food: " + std::to_string((int)totalFood) + sep + "Eggs:" + std::to_string(numEggs) + sep + "Nymphs: " + std::to_string(numBabyCrickets) + sep + "Adults: " + std::to_string(numMatureCrickets);
 	s += sep + "Capacity: "  + std::to_string(numEggs+ numBabyCrickets + numMatureCrickets + numDeadCrickets) + "/" + std::to_string(cageCapacity);
 
-	std::string s2; 
+	std::string s2 = "Money: " + std::to_string((int)totalMoney); 
 
 	if(numDeadCrickets > 0) {
 		s2 += sep + "Dead: " + std::to_string(numDeadCrickets);

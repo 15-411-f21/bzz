@@ -3384,11 +3384,11 @@ GLAPI void APIENTRY glVertexAttribDivisorARB (GLuint index, GLuint divisor);
 
 #ifndef GL_ARB_parallel_shader_compile
 #define GL_ARB_parallel_shader_compile 1
-#define GL_MAX_SHADER_COMPILER_THREADS_ARB 0x91B0
+#define GL_MAX_SHADER_COMPILER_S_ARB 0x91B0
 #define GL_COMPLETION_STATUS_ARB          0x91B1
 typedef void (APIENTRYP PFNGLMAXSHADERCOMPILERTHREADSARBPROC) (GLuint count);
 #ifdef GL_GLEXT_PROTOTYPES
-GLAPI void APIENTRY glMaxShaderCompilerThreadsARB (GLuint count);
+GLAPI void APIENTRY glMaxShaderCompilersARB (GLuint count);
 #endif
 #endif /* GL_ARB_parallel_shader_compile */
 
